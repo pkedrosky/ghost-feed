@@ -458,9 +458,11 @@ class GhostActivityPubEmbed extends HTMLElement {
         html += this.renderItem(item, this._profileData);
       });
 
-      const loadMoreButton = this._nextPage
-        ? `<button class="load-more" part="load-more">Load more</button>`
-        : "";
+      const loadMoreButton =
+        this._nextPage ||
+        (itemsData.orderedItems && itemsData.orderedItems.length > items.length)
+          ? `<button class="load-more" part="load-more">Load more</button>`
+          : "";
 
       const attachmentModal = `
         <dialog>
