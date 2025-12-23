@@ -291,7 +291,7 @@ class GhostActivityPubEmbed extends HTMLElement {
   }
 
   static get observedAttributes() {
-    return ["url", "proxy", "include-posts"];
+    return ["url", "proxy", "include-posts", "maxitems"];
   }
 
   _profileData = null;
@@ -447,7 +447,9 @@ class GhostActivityPubEmbed extends HTMLElement {
           throw new Error('Invalid feed format: missing "orderedItems" array');
         }
 
-        items = itemsData.orderedItems.slice(0, 10);
+        const maxItems = parseInt(this.getAttribute("maxitems") || "10", 10);
+        items = itemsData.orderedItems.slice(0, maxItems);
+
         this._nextPage = itemsData.next || null;
       }
 
