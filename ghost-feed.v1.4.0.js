@@ -443,7 +443,7 @@ class GhostActivityPubEmbed extends HTMLElement {
           ? itemsData.orderedItems
           : itemsData.orderedItems.slice(0, maxItems);
 
-        this._nextPage = itemsData.next || null;
+        this._nextPage = itemsData.next || itemsData.prev || null;
       }
 
       let html = "";
@@ -525,35 +525,42 @@ class GhostActivityPubEmbed extends HTMLElement {
     this._infiniteScrollObserver.observe(sentinel);
   }
 
-  async loadMoreItems(button) {
+  async loadMoreItems() {
     if (!this._nextPage || this._isLoadingMore) return;
 
     this._isLoadingMore = true;
-    if (button) button.textContent = "Loading…";
-
     const [err, itemsData] = await this.fetchEndpoint(this._nextPage);
     if (err) {
-      if (button) button.textContent = "Error loading";
       this._isLoadingMore = false;
       return;
     }
 
-    this._nextPage = itemsData.next || null;
+    this._nextPage = itemsData.next || itemsData.prev || null;
 
     const container = this.shadowRoot.querySelector(".feed-items");
+    const itemsArray = itemsData.orderedItems || [];
+    let appended = 0;
 
-    itemsData.orderedItems?.forEach((item) => {
-      container.insertAdjacentHTML(
-        "beforeend",
-        this.renderItem(item, this._profileData),
-      );
+    itemsArray.forEach((item) => {
+      const html = this.renderItem(item, this._profileData);
+      if (html) {
+        container.insertAdjacentHTML("beforeend", html);
+        appended++;
+      }
     });
 
-    if (!this._nextPage) {
-      if (button) button.remove();
+    if (appended === 0) {
+      if (this._nextPage) {
+        this.loadMoreItems();
+        return;
+      }
       this.teardownInfiniteScroll();
-    } else if (button) {
-      button.textContent = "Load more";
+      this._isLoadingMore = false;
+      return;
+    }
+
+    if (!this._nextPage) {
+      this.teardownInfiniteScroll();
     }
 
     this._isLoadingMore = false;
