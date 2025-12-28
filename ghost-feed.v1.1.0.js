@@ -470,7 +470,7 @@ class GhostActivityPubEmbed extends HTMLElement {
         </dialog>`;
 
       this.shadowRoot.querySelector(".feed-container").innerHTML =
-        `${attachmentModal}${profileHeaderHTML}<div class="feed-items">${html}</div>${loadMoreButton}${infiniteScrollSentinel}`;
+        `${attachmentModal}${profileHeaderHTML}<div class="feed-items">${html}</div>${infiniteScrollSentinel}`;
       this.setupInfiniteScroll();
     } catch (error) {
       this.shadowRoot.querySelector(".feed-container").innerHTML =
