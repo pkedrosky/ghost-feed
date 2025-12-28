@@ -439,7 +439,9 @@ class GhostActivityPubEmbed extends HTMLElement {
         }
 
         const maxItems = parseInt(this.getAttribute("maxitems") || "10", 10);
-        items = itemsData.orderedItems.slice(0, maxItems);
+        items = this.hasAttribute("infinite-scroll")
+          ? itemsData.orderedItems
+          : itemsData.orderedItems.slice(0, maxItems);
 
         this._nextPage = itemsData.next || null;
       }
