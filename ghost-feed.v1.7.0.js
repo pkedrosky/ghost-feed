@@ -291,10 +291,6 @@ class GhostActivityPubEmbed extends HTMLElement {
 
   /* ==================================================================== */
 
-  liek this?
-
- /* ==================================================================== */
-
   formatDate(dateStr) {
     const date = new Date(dateStr);
     return new Intl.DateTimeFormat("en-US", {
@@ -331,39 +327,6 @@ renderProfileHeader(profileData) {
     </div>
   `;
 }
-
-
-  
-
-renderProfileHeader(profileData) {
-  return `
-    <div class="profile-header" part="header">
-      ${
-        profileData.image?.url
-          ? `<img class="profile-image" src="${profileData.image.url}">`
-          : `<div class="profile-image-placeholder"></div>`
-      }
-      <div class="profile-info">
-        <div class="profile-info-header">
-          ${
-            profileData.icon?.url
-              ? `<img class="profile-icon" src="${profileData.icon.url}">`
-              : `<div class="profile-icon-placeholder"></div>`
-          }
-          <button class="ghap-follow-button">Follow</button>
-        </div>
-        <h2 class="profile-name">${profileData.name}</h2>
-        <p class="profile-username">
-          <a href="https://${profileData.serverHost}" target="_blank">
-            @${profileData.preferredUsername}@${profileData.serverHost}
-          </a>
-        </p>
-        <p class="profile-description">${profileData.summary || ""}</p>
-      </div>
-    </div>
-  `;
-}
-
 
   
   /* ==================================================================== */
