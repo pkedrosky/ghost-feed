@@ -519,7 +519,7 @@ class GhostActivityPubEmbed extends HTMLElement {
           }
         });
       },
-      { root: this.shadowRoot, rootMargin: "0px 0px 200px 0px" },
+      { root: null, rootMargin: "0px 0px 200px 0px" },
     );
 
     this._infiniteScrollObserver.observe(sentinel);
