@@ -707,7 +707,7 @@ class GhostActivityPubEmbed extends HTMLElement {
       if (event.target.matches(".ghap-follow-button")) {
         const followModalContent = document.createElement("div");
         followModalContent.innerHTML = `
-          <h2>Follow me on the fediverse</h2>
+          <h2>Follow me</h2>
           <p>Available on Ghost, Flipboard, Threads, Bluesky, Mastodon, or wherever you get your social web feeds.</p>
           <p>Copy the handle below and search it on your platform to follow me.</p>
           <div class="profile-username-container">
