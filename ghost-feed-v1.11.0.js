@@ -729,15 +729,13 @@ class GhostActivityPubEmbed extends HTMLElement {
   }
 
 attributeChangedCallback(name, oldValue, newValue) {
-  if (oldValue === newValue) return;
-  if (["url", "proxy", "include-posts", "maxitems", "infinite"].includes(name)) {
-    // Clear any pending fetch
-    if (this._debounceTimer) clearTimeout(this._debounceTimer);
-    
-    // Wait 50ms to ensure all attributes are applied before fetching
-    this._debounceTimer = setTimeout(() => {
-      this.fetchFeed();
-    }, 50);
+    if (oldValue === newValue) return;
+    if (["url", "proxy", "include-posts", "maxitems", "infinite"].includes(name)) {
+      if (this._debounceTimer) clearTimeout(this._debounceTimer);
+      this._debounceTimer = setTimeout(() => {
+        this.fetchFeed();
+      }, 50);
+    }
   }
 }
 
