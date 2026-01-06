@@ -329,7 +329,12 @@ class GhostActivityPubEmbed extends HTMLElement {
         <path d="M20 6 9 17l-5-5"></path>
       </svg>
     </button>`;
-
+  
+  getUuidFromObject(obj) {
+    if (!obj?.id) return null;
+    return obj.id.split('/').pop();
+  }
+  
   formatDate(dateStr) {
     const date = new Date(dateStr);
     return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
@@ -374,6 +379,12 @@ class GhostActivityPubEmbed extends HTMLElement {
     ) {
       const obj = item.object;
       const published = obj.published;
+      const uuid = this.getUuidFromObject(obj);
+      const date = this.formatDate(published);
+      const dateHtml = uuid
+        ? `<a href="/n/${uuid}" class="feed-item-date" target="_top" rel="noopener">${date}</a>`
+        : `<span class="feed-item-date">${date}</span>`;
+
 
       // attachment can be object or array
       const att = Array.isArray(obj.attachment) ? obj.attachment[0] : obj.attachment;
@@ -390,10 +401,10 @@ class GhostActivityPubEmbed extends HTMLElement {
             </div>
             <div class="feed-author-meta" part="feed-author-meta">
               <div class="feed-author-name">${profileData.name || ""}</div>
-              <div class="feed-author-username">
-                @${profileData.preferredUsername}@${profileData.serverHost} ·
-                <span class="feed-author-date">${this.formatDate(published)}</span>
-              </div>
+                <div class="feed-author-username">
+                  @${profileData.preferredUsername}@${profileData.serverHost} ·
+                    ${dateHtml}
+                </div>
             </div>
           </div>
 
