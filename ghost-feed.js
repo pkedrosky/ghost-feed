@@ -34,7 +34,6 @@ const styles = `
   justify-content: space-between;
   padding-inline: var(--padding);
 }
-
 .profile-info-header .ghap-follow-button {
   border: none;
   padding: 10px 16px;
@@ -64,7 +63,6 @@ const styles = `
   background-color: #fff;
   outline: #15171a1a;
 }
-
 .profile-name {
   font-size: 2.2em;
   padding-inline: var(--padding);
@@ -184,10 +182,18 @@ const styles = `
   margin: 0;
   color: rgb(124 139 154);
 }
-.feed-item-date {
+
+.feed-item-date,
+a.feed-item-date {
+  font: inherit;
   color: rgb(124 139 154);
-  font-size: 1.3em;
+  text-decoration: none;
 }
+
+a.feed-item-date:hover {
+  text-decoration: underline;
+}
+
 .feed-item .feed-item-image {
   max-width: 100%;
   max-height: 200px;
@@ -237,6 +243,7 @@ dialog .feed-item-image {
   max-width: 100vw;
   max-height: 100vh;
 }
+
 .follow-modal {
   background-color: white;
   padding: 15px;
@@ -262,19 +269,8 @@ dialog .feed-item-image {
   display: inline-flex;
 }
 
-/* Load more button */
-.load-more {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1.4em;
-  cursor: pointer;
-  background: var(--background-color);
-  border: 1px solid var(--border-color);
-  border-radius: 0 0 10px 10px;
-}
-.load-more:hover {
-  background: var(--border-color);
-}
+/* infinite scroll sentinel */
+.ghap-sentinel { height: 1px; }
 `;
 
 class GhostActivityPubEmbed extends HTMLElement {
@@ -291,12 +287,39 @@ class GhostActivityPubEmbed extends HTMLElement {
   }
 
   static get observedAttributes() {
-    return ["url", "proxy", "include-posts", "maxitems"];
+    return ["url", "proxy", "include-posts", "maxitems", "infinite"];
   }
 
   _profileData = null;
-  _nextPage = null;
-  _isLoadingMore = false;
+
+  // Pagination buffer (prevents skipping)
+  _pageItems = [];
+  _pageIndex = 0;
+  _nextPageUrl = null;
+
+  // Dedupe + loop protection
+  _seenIds = new Set();
+  _seenPageUrls = new Set();
+
+  // Batch sizing
+  _batchSize = 10;       // maxitems
+  _targetCount = 0;      // render up to this many items total
+  _renderedCount = 0;
+
+  // Infinite + gating
+  _isInfinite = false;
+  _observer = null;
+  _isLoading = false;
+
+  // Prevent auto-draining when sentinel is visible
+  _scrollArmed = false;
+  _lastScrollY = 0;
+  _onScroll = null;
+
+  // Dialog
+  dialogInitiated = false;
+  dialog = null;
+  dialogContent = null;
 
   _copyHandleButton = ({ preferredUsername, serverHost }) => `
     <button class="copy-handle" data-handle="@${preferredUsername}@${serverHost}" title="Copy handle">
@@ -314,72 +337,93 @@ class GhostActivityPubEmbed extends HTMLElement {
         <path d="M20 6 9 17l-5-5"></path>
       </svg>
     </button>`;
-
+  
+  getUuidFromObject(obj) {
+    if (!obj?.id) return null;
+    return obj.id.split('/').pop();
+  }
+  
   formatDate(dateStr) {
     const date = new Date(dateStr);
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-    }).format(date);
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
   }
 
   renderProfileHeader(profileData) {
     return `
       <div class="profile-header" part="header">
-        ${profileData.image?.url ? `<img class="profile-image" src="${profileData.image.url}">` : '<div class="profile-image-placeholder"></div>'}
+        ${
+          profileData.image?.url
+            ? `<img class="profile-image" src="${profileData.image.url}" alt="">`
+            : '<div class="profile-image-placeholder"></div>'
+        }
         <div class="profile-info">
           <div class="profile-info-header">
-            ${profileData.icon?.url ? `<img class="profile-icon" src="${profileData.icon.url}">` : '<div class="profile-icon-placeholder"></div>'}
+            ${
+              profileData.icon?.url
+                ? `<img class="profile-icon" src="${profileData.icon.url}" alt="">`
+                : '<div class="profile-icon-placeholder"></div>'
+            }
             <button class="ghap-follow-button">Follow</button>
           </div>
-          <h2 class="profile-name">${profileData.name}</h2>
+          <h2 class="profile-name">${profileData.name || ""}</h2>
           <p class="profile-username">
-            <a href="https://${profileData.serverHost}" target="_blank">@${profileData.preferredUsername}@${profileData.serverHost}</a>
+            <a href="https://${profileData.serverHost}" target="_blank" rel="noreferrer noopener">
+              @${profileData.preferredUsername}@${profileData.serverHost}
+            </a>
             ${this._copyHandleButton(profileData)}
             <span class="copy-handle-success">Copied!</span>
           </p>
-          <p class="profile-description">${profileData.summary}</p>
+          <p class="profile-description">${profileData.summary || ""}</p>
         </div>
       </div>`;
   }
 
   renderItem(item, profileData) {
     if (
-      item.type === "Create" &&
+      item?.type === "Create" &&
       item.object &&
       (item.object.type === "Note" ||
         (this.hasAttribute("include-posts") && item.object.type === "Article"))
     ) {
-      const note = item.object;
-      const published = note.published;
-      let attachment = "";
+      const obj = item.object;
+      const published = obj.published;
+      const uuid = this.getUuidFromObject(obj);
+      const date = this.formatDate(published);
+      const dateHtml = uuid
+        ? `<a href="/n/${uuid}" class="feed-item-date" target="_top" rel="noopener">${date}</a>`
+        : `<span class="feed-item-date">${date}</span>`;
 
-      if (note.attachment && note.attachment.type === "Image") {
-        attachment = `<img class="feed-item-image" src="${note.attachment.url}" alt="Attached image">`;
-      }
+
+      // attachment can be object or array
+      const att = Array.isArray(obj.attachment) ? obj.attachment[0] : obj.attachment;
+      const attachment =
+        att && att.type === "Image" && att.url
+          ? `<img class="feed-item-image" src="${att.url}" alt="Attached image">`
+          : "";
 
       return `
         <div class="feed-item" part="feed-item">
           <div class="feed-author" part="feed-author">
             <div class="feed-author-avatar" part="feed-author-avatar">
-              <img src="${profileData.icon.url}">
+              <img src="${profileData.icon?.url || ""}" alt="">
             </div>
             <div class="feed-author-meta" part="feed-author-meta">
-              <div class="feed-author-name">${profileData.name}</div>
-              <div class="feed-author-username">@${profileData.preferredUsername}@${profileData.serverHost} ·
-                <span class="feed-author-date">${this.formatDate(published)}</span>
-              </div>
+              <div class="feed-author-name">${profileData.name || ""}</div>
+                <div class="feed-author-username">
+                  @${profileData.preferredUsername}@${profileData.serverHost} ·
+                    ${dateHtml}
+                </div>
             </div>
           </div>
+
           <div class="feed-item-content" part="feed-item-content">
             ${
-              note.type === "Note"
-                ? note.content
+              obj.type === "Note"
+                ? (obj.content || "")
                 : `
-              <a href="${note.url}" target="_top"
-                 class="feed-item-article-preview">
-                <h3>${note.name}</h3>
-                <p>${note.summary || ""}</p>
+              <a href="${obj.url}" target="_top" class="feed-item-article-preview">
+                <h3>${obj.name || ""}</h3>
+                <p>${obj.summary || ""}</p>
               </a>`
             }
             ${attachment}
@@ -390,79 +434,202 @@ class GhostActivityPubEmbed extends HTMLElement {
     return ``;
   }
 
+  _getSiteUrl() {
+    return new URL(this.getAttribute("url") || document.location.href);
+  }
+
+  _getProxyUrl() {
+    return new URL(this.getAttribute("proxy") || this._getSiteUrl());
+  }
+
+  _normalizeApPath(endpoint) {
+    // Handles:
+    // - "users/index"
+    // - "/.ghost/activitypub/users/index"
+    // - "https://site/.ghost/activitypub/users/index?x=y"
+    const siteUrl = this._getSiteUrl();
+    let u;
+    try {
+      u = new URL(endpoint, siteUrl.origin);
+    } catch {
+      return String(endpoint || "").replace(/^\/+/, "");
+    }
+
+    const prefix = "/.ghost/activitypub/";
+    const href = u.href;
+    const i = href.indexOf(prefix);
+    if (i !== -1) return href.slice(i + prefix.length).replace(/^\/+/, "");
+
+    return String(endpoint || "").replace(/^\/+/, "");
+  }
+
   async fetchEndpoint(endpoint) {
-    const url = new URL(this.getAttribute("url") || document.location.href);
-    const proxy = new URL(this.getAttribute("proxy") || url);
-    const proxyMode = proxy.hostname !== url.hostname;
-    const path = endpoint
-      .replace("www.", "")
-      .replace(`${url.origin}/.ghost/activitypub/`, "");
-    const baseUrl = proxyMode ? proxy.origin : url.origin;
+    const url = this._getSiteUrl();
+    const proxy = this._getProxyUrl();
+    const proxyMode = proxy.origin !== url.origin;
+
+    const path = this._normalizeApPath(endpoint);
+    const baseOrigin = proxyMode ? proxy.origin : url.origin;
 
     try {
-      const response = await fetch(`${baseUrl}/.ghost/activitypub/${path}`, {
+      const response = await fetch(`${baseOrigin}/.ghost/activitypub/${path}`, {
         headers: {
           accept: "application/activity+json",
           ...(proxyMode ? { "x-proxy": url.origin } : {}),
         },
       });
 
-      if (!response.ok) {
-        return [new Error(`HTTP error! status: ${response.status}`), null];
-      }
-
+      if (!response.ok) return [new Error(`HTTP error! status: ${response.status}`), null];
       return [null, await response.json()];
     } catch (error) {
       return [error, null];
     }
   }
 
+  _teardownObserver() {
+    if (this._observer) this._observer.disconnect();
+    this._observer = null;
+  }
+
+  _setupObserver() {
+    if (!this._isInfinite) return;
+    if (this._observer) return;
+
+    const sentinel = this.shadowRoot.querySelector(".ghap-sentinel");
+    if (!sentinel) return;
+
+    this._observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry?.isIntersecting) return;
+        if (this._isLoading) return;
+
+        // Prevent auto-draining:
+        // after initial batch, require a real downward scroll to arm the next load
+        if (this._renderedCount > 0 && !this._scrollArmed) return;
+
+        if (this._renderedCount > 0) this._scrollArmed = false;
+
+        this._targetCount += this._batchSize;
+        this._drain();
+      },
+      { root: null, rootMargin: "200px 0px", threshold: 0 }
+    );
+
+    this._observer.observe(sentinel);
+  }
+
+  _appendItemsFromBuffer() {
+    const container = this.shadowRoot.querySelector(".feed-items");
+    if (!container) return;
+
+    while (this._pageIndex < this._pageItems.length && this._renderedCount < this._targetCount) {
+      const item = this._pageItems[this._pageIndex++];
+
+      const id = item?.id || item?.object?.id || null;
+      if (id && this._seenIds.has(id)) continue;
+      if (id) this._seenIds.add(id);
+
+      const html = this.renderItem(item, this._profileData);
+      if (html) {
+        container.insertAdjacentHTML("beforeend", html);
+        this._renderedCount += 1;
+      }
+    }
+  }
+
+  async _fetchNextPageIfNeeded() {
+    if (this._pageIndex < this._pageItems.length) return;
+    if (!this._nextPageUrl) return;
+
+    const key = String(this._nextPageUrl);
+    if (this._seenPageUrls.has(key)) {
+      this._nextPageUrl = null;
+      return;
+    }
+    this._seenPageUrls.add(key);
+
+    const [err, itemsData] = await this.fetchEndpoint(this._nextPageUrl);
+    if (err) {
+      const container = this.shadowRoot.querySelector(".feed-container");
+      if (container) {
+        container.insertAdjacentHTML("beforeend", `<div class="error">Error loading more: ${err.message}</div>`);
+      }
+      this._nextPageUrl = null;
+      return;
+    }
+
+    this._pageItems = Array.isArray(itemsData?.orderedItems) ? itemsData.orderedItems : [];
+    this._pageIndex = 0;
+    this._nextPageUrl = itemsData?.next || null;
+  }
+
+  async _drain() {
+    if (this._isLoading) return;
+    if (!this._profileData) return;
+
+    this._isLoading = true;
+
+    this._appendItemsFromBuffer();
+
+    while (
+      this._renderedCount < this._targetCount &&
+      this._pageIndex >= this._pageItems.length &&
+      this._nextPageUrl
+    ) {
+      await this._fetchNextPageIfNeeded();
+      this._appendItemsFromBuffer();
+      if (this._pageItems.length === 0) break;
+    }
+
+    const loading = this.shadowRoot.querySelector(".loading");
+    if (loading) loading.remove();
+
+    // Exhausted
+    if (!this._nextPageUrl && this._pageIndex >= this._pageItems.length) {
+      this._teardownObserver();
+      const s = this.shadowRoot.querySelector(".ghap-sentinel");
+      if (s) s.remove();
+    }
+
+    this._isLoading = false;
+  }
+
   async fetchFeed() {
-    const url = new URL(this.getAttribute("url") || document.location.href);
+    this._teardownObserver();
+
+    // reset
+    this._profileData = null;
+    this._pageItems = [];
+    this._pageIndex = 0;
+    this._nextPageUrl = null;
+
+    this._seenIds.clear();
+    this._seenPageUrls.clear();
+
+    this._isLoading = false;
+
+    this._batchSize = parseInt(this.getAttribute("maxitems") || "10", 10);
+    if (!Number.isFinite(this._batchSize) || this._batchSize < 1) this._batchSize = 10;
+
+    this._isInfinite = this.hasAttribute("infinite");
+
+    this._renderedCount = 0;
+    this._targetCount = this._batchSize;
+
+    const container = this.shadowRoot.querySelector(".feed-container");
+    container.innerHTML = `<div class="loading">Loading activity feed...</div>`;
+
+    const url = this._getSiteUrl();
 
     try {
-      const [profileError, profileData] =
-        await this.fetchEndpoint("users/index");
+      const [profileError, profileData] = await this.fetchEndpoint("users/index");
       if (profileError) throw profileError;
 
       this._profileData = profileData;
       this._profileData.serverHost = url.hostname.replace("www.", "");
 
       const profileHeaderHTML = this.renderProfileHeader(this._profileData);
-
-      let items = [];
-      const [error, outboxData] = await this.fetchEndpoint("outbox/index");
-      if (error) throw error;
-
-      if (outboxData.totalItems > 0) {
-        if (!outboxData.first)
-          throw new Error('Invalid feed format: missing "first" property');
-
-        const [firstError, itemsData] = await this.fetchEndpoint(
-          outboxData.first,
-        );
-        if (firstError) throw firstError;
-
-        if (!itemsData.orderedItems || !Array.isArray(itemsData.orderedItems)) {
-          throw new Error('Invalid feed format: missing "orderedItems" array');
-        }
-
-        const maxItems = parseInt(this.getAttribute("maxitems") || "10", 10);
-        items = itemsData.orderedItems.slice(0, maxItems);
-
-        this._nextPage = itemsData.next || null;
-      }
-
-      let html = "";
-      items.forEach((item) => {
-        html += this.renderItem(item, this._profileData);
-      });
-
-      const loadMoreButton =
-        this._nextPage ||
-        (itemsData.orderedItems && itemsData.orderedItems.length > items.length)
-          ? `<button class="load-more" part="load-more">Load more</button>`
-          : "";
 
       const attachmentModal = `
         <dialog>
@@ -478,11 +645,36 @@ class GhostActivityPubEmbed extends HTMLElement {
           <div class="dialog-content"></div>
         </dialog>`;
 
-      this.shadowRoot.querySelector(".feed-container").innerHTML =
-        `${attachmentModal}${profileHeaderHTML}<div class="feed-items">${html}</div>${loadMoreButton}`;
+      container.innerHTML = `
+        ${attachmentModal}
+        ${profileHeaderHTML}
+        <div class="feed-items"></div>
+        ${this._isInfinite ? `<div class="ghap-sentinel"></div>` : ``}
+      `;
+
+      const [error, outboxData] = await this.fetchEndpoint("outbox/index");
+      if (error) throw error;
+
+      if (outboxData?.totalItems > 0) {
+        if (!outboxData.first) throw new Error('Invalid feed format: missing "first" property');
+
+        const [firstError, itemsData] = await this.fetchEndpoint(outboxData.first);
+        if (firstError) throw firstError;
+
+        if (!Array.isArray(itemsData?.orderedItems)) {
+          throw new Error('Invalid feed format: missing "orderedItems" array');
+        }
+
+        this._pageItems = itemsData.orderedItems;
+        this._pageIndex = 0;
+        this._nextPageUrl = itemsData.next || null;
+      }
+
+      this._setupObserver();
+      await this._drain();
     } catch (error) {
-      this.shadowRoot.querySelector(".feed-container").innerHTML =
-        `<div class="error">Error loading feed: ${error.message}</div>`;
+      container.innerHTML = `<div class="error">Error loading feed: ${error.message}</div>`;
+      this._teardownObserver();
     }
   }
 
@@ -497,65 +689,44 @@ class GhostActivityPubEmbed extends HTMLElement {
     this.dialogInitiated = true;
   }
 
-  showDialog(content) {
+  showDialog(node) {
     this.initDialog();
-    this.dialogContent.innerHTML = content.outerHTML;
+    this.dialogContent.innerHTML = node.outerHTML;
     this.dialog.showModal();
   }
 
-  async loadMoreItems(button) {
-    if (!this._nextPage || this._isLoadingMore) return;
-
-    this._isLoadingMore = true;
-    button.textContent = "Loading…";
-
-    const [err, itemsData] = await this.fetchEndpoint(this._nextPage);
-    if (err) {
-      button.textContent = "Error loading";
-      return;
-    }
-
-    this._nextPage = itemsData.next || null;
-
-    const container = this.shadowRoot.querySelector(".feed-items");
-
-    itemsData.orderedItems?.forEach((item) => {
-      container.insertAdjacentHTML(
-        "beforeend",
-        this.renderItem(item, this._profileData),
-      );
-    });
-
-    if (!this._nextPage) {
-      button.remove();
-    } else {
-      button.textContent = "Load more";
-    }
-
-    this._isLoadingMore = false;
-  }
-
   connectedCallback() {
+    // arm infinite loads only after user scrolls downward
+    this._lastScrollY = window.scrollY || 0;
+    this._scrollArmed = false;
+
+    this._onScroll = () => {
+      const y = window.scrollY || 0;
+      if (y > this._lastScrollY + 8) this._scrollArmed = true;
+      this._lastScrollY = y;
+    };
+    window.addEventListener("scroll", this._onScroll, { passive: true });
+
     this.fetchFeed();
 
-    this.shadowRoot.addEventListener(
-      "click",
-      (event) => {
-        if (event.target.matches(".feed-item .feed-item-image")) {
-          this.showDialog(event.target);
-        }
+    this.shadowRoot.addEventListener("click", (event) => {
+      if (event.target.matches(".feed-item .feed-item-image")) {
+        this.showDialog(event.target);
+        return;
+      }
 
-        if (event.target.closest(".copy-handle")) {
-          const btn = event.target.closest(".copy-handle");
-          navigator.clipboard.writeText(btn.getAttribute("data-handle"));
-          btn.classList.add("copied");
-          setTimeout(() => btn.classList.remove("copied"), 2000);
-        }
+      if (event.target.closest(".copy-handle")) {
+        const btn = event.target.closest(".copy-handle");
+        navigator.clipboard.writeText(btn.getAttribute("data-handle"));
+        btn.classList.add("copied");
+        setTimeout(() => btn.classList.remove("copied"), 2000);
+        return;
+      }
 
-        if (event.target.matches(".ghap-follow-button")) {
-          const followModalContent = document.createElement("div");
-          followModalContent.innerHTML = `
-          <h2>Follow me on the fediverse</h2>
+      if (event.target.matches(".ghap-follow-button")) {
+        const followModalContent = document.createElement("div");
+        followModalContent.innerHTML = `
+          <h2>Follow me</h2>
           <p>Available on Ghost, Flipboard, Threads, Bluesky, Mastodon, or wherever you get your social web feeds.</p>
           <p>Copy the handle below and search it on your platform to follow me.</p>
           <div class="profile-username-container">
@@ -565,20 +736,20 @@ class GhostActivityPubEmbed extends HTMLElement {
             </div>
           </div>
         `;
-          followModalContent.classList.add("follow-modal");
-          this.showDialog(followModalContent);
-        }
+        followModalContent.classList.add("follow-modal");
+        this.showDialog(followModalContent);
+      }
+    });
+  }
 
-        if (event.target.matches(".load-more")) {
-          this.loadMoreItems(event.target);
-        }
-      },
-      false,
-    );
+  disconnectedCallback() {
+    this._teardownObserver();
+    if (this._onScroll) window.removeEventListener("scroll", this._onScroll);
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
-    if (name === "url" && oldValue !== newValue) {
+    if (oldValue === newValue) return;
+    if (["url", "proxy", "include-posts", "maxitems", "infinite"].includes(name)) {
       this.fetchFeed();
     }
   }
