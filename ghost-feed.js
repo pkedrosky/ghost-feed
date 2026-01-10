@@ -1,8 +1,44 @@
+/**
+ * GhostActivityPubEmbed - A Web Component for embedding ActivityPub feeds from Ghost publications
+ *
+ * This component fetches and displays federated social content from a Ghost blog's
+ * ActivityPub endpoints, supporting infinite scroll, pagination, and theming.
+ *
+ * Usage:
+ *   <ghost-activitypub-embed
+ *     url="https://example.ghost.io"
+ *     proxy="https://proxy.example.com"
+ *     include-posts
+ *     maxitems="10"
+ *     infinite>
+ *   </ghost-activitypub-embed>
+ *
+ * Attributes:
+ *   - url: The Ghost site URL to fetch ActivityPub data from
+ *   - proxy: Optional proxy server for cross-origin requests
+ *   - include-posts: Include Article types in addition to Notes
+ *   - maxitems: Number of items per batch (default: 10)
+ *   - infinite: Enable infinite scrolling
+ *
+ * CSS Custom Properties (theming):
+ *   --ghap-background-color, --ghap-text-color, --ghap-padding,
+ *   --ghap-font-family, --ghap-font-size, --ghap-border-color,
+ *   --ghap-border-radius, --ghap-border-width, --ghap-feed-vertical-gap
+ */
+
+// =============================================================================
+// STYLES
+// =============================================================================
+
 const styles = `
+/* -----------------------------------------------------------------------------
+   Host & Container Styles
+   ----------------------------------------------------------------------------- */
 :host {
   display: block;
 }
 .feed-container {
+  /* CSS custom properties for theming - fallback to sensible defaults */
   --background-color: var(--ghap-background-color, #fff);
   --text-color: var(--ghap-text-color, #000);
   --padding: var(--ghap-padding, 1rem);
@@ -19,11 +55,17 @@ const styles = `
   border-width: var(--ghap-border-width, 1px);
   overflow: hidden;
 }
+
+/* Reset styles for all elements except dialog */
 .feed-container :where(*:not(dialog)) {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
+
+/* -----------------------------------------------------------------------------
+   Profile Header Styles
+   ----------------------------------------------------------------------------- */
 .profile-header {
   border-bottom: 1px solid var(--border-color);
   padding-bottom: var(--padding);
@@ -43,6 +85,8 @@ const styles = `
   cursor: pointer;
   font-family: var(--font-family);
 }
+
+/* Profile banner image and placeholder */
 .profile-image-placeholder {
   height: 100px;
 }
@@ -51,6 +95,8 @@ const styles = `
   max-height: 300px;
   object-fit: cover;
 }
+
+/* Profile avatar icon - positioned to overlap the banner */
 .profile-icon,
 .profile-icon-placeholder {
   --icon-size: var(--profile-icon-size, 90px);
@@ -63,6 +109,8 @@ const styles = `
   background-color: #fff;
   outline: #15171a1a;
 }
+
+/* Profile text content */
 .profile-name {
   font-size: 2.2em;
   padding-inline: var(--padding);
@@ -83,6 +131,8 @@ const styles = `
 .profile-username pre {
   font-family: monospace;
 }
+
+/* Copy handle button - allows users to copy the ActivityPub handle */
 .profile-username .copy-handle {
   color: var(--ghap-text-color);
   opacity: 0.5;
@@ -111,6 +161,8 @@ const styles = `
   color: green;
   transition: opacity 0.2s ease;
 }
+
+/* Copied state - shows checkmark and success message */
 .copy-handle.copied + .copy-handle-success {
   opacity: 1;
 }
@@ -122,6 +174,9 @@ const styles = `
   display: inline-flex;
 }
 
+/* -----------------------------------------------------------------------------
+   Feed Item Styles
+   ----------------------------------------------------------------------------- */
 .feed-item {
   --icon-size: var(--ghap-feed-item-icon-size, 40px);
   display: flex;
@@ -132,6 +187,8 @@ const styles = `
 .feed-item:last-child {
   border-bottom: none;
 }
+
+/* Feed item author section */
 .feed-author {
   display: flex;
   gap: 1rem;
@@ -157,12 +214,16 @@ const styles = `
   color: rgb(124 139 154);
   font-size: 1.3em;
 }
+
+/* Feed item content area */
 .feed-item-content {
   margin: 0.5em 0;
   padding-left: calc(var(--icon-size) + 1em);
   font-size: 1.4em;
   color: rgb(57, 64, 71);
 }
+
+/* Article preview card (for Article type posts) */
 .feed-item-article-preview {
   display: block;
   text-decoration: none;
@@ -183,6 +244,7 @@ const styles = `
   color: rgb(124 139 154);
 }
 
+/* Feed item date/timestamp */
 .feed-item-date,
 a.feed-item-date {
   font: inherit;
@@ -194,6 +256,7 @@ a.feed-item-date:hover {
   text-decoration: underline;
 }
 
+/* Feed item image attachments */
 .feed-item .feed-item-image {
   max-width: 100%;
   max-height: 200px;
@@ -201,6 +264,10 @@ a.feed-item-date:hover {
   margin-top: 0.5rem;
   border-radius: 4px;
 }
+
+/* -----------------------------------------------------------------------------
+   Loading & Error States
+   ----------------------------------------------------------------------------- */
 .loading {
   padding: 1rem;
   text-align: center;
@@ -212,6 +279,10 @@ a.feed-item-date:hover {
   border: 1px solid #e53935;
   border-radius: 4px;
 }
+
+/* -----------------------------------------------------------------------------
+   Dialog / Modal Styles (for image lightbox and follow modal)
+   ----------------------------------------------------------------------------- */
 dialog {
   border: none;
   padding: 0;
@@ -244,6 +315,7 @@ dialog .feed-item-image {
   max-height: 100vh;
 }
 
+/* Follow modal - displays instructions for following via ActivityPub */
 .follow-modal {
   background-color: white;
   padding: 15px;
@@ -269,11 +341,21 @@ dialog .feed-item-image {
   display: inline-flex;
 }
 
-/* infinite scroll sentinel */
+/* -----------------------------------------------------------------------------
+   Infinite Scroll Sentinel
+   ----------------------------------------------------------------------------- */
+/* Invisible element observed by IntersectionObserver to trigger loading more items */
 .ghap-sentinel { height: 1px; }
 `;
 
+// =============================================================================
+// COMPONENT CLASS
+// =============================================================================
+
 class GhostActivityPubEmbed extends HTMLElement {
+  /**
+   * Constructor - sets up Shadow DOM with initial loading state
+   */
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -286,41 +368,58 @@ class GhostActivityPubEmbed extends HTMLElement {
     `;
   }
 
+  /**
+   * Defines which attributes trigger attributeChangedCallback when modified
+   */
   static get observedAttributes() {
     return ["url", "proxy", "include-posts", "maxitems", "infinite"];
   }
 
+  // ---------------------------------------------------------------------------
+  // Instance Properties
+  // ---------------------------------------------------------------------------
+
+  /** Cached profile data from the ActivityPub users endpoint */
   _profileData = null;
 
-  // Pagination buffer (prevents skipping)
-  _pageItems = [];
-  _pageIndex = 0;
-  _nextPageUrl = null;
+  // Pagination buffer - stores items from current page to prevent skipping
+  _pageItems = []; // Items from the current ActivityPub page
+  _pageIndex = 0; // Current position within _pageItems
+  _nextPageUrl = null; // URL for the next page of results
 
-  // Dedupe + loop protection
-  _seenIds = new Set();
-  _seenPageUrls = new Set();
+  // Deduplication and loop protection
+  _seenIds = new Set(); // Track seen item IDs to prevent duplicates
+  _seenPageUrls = new Set(); // Track fetched page URLs to prevent infinite loops
 
-  // Batch sizing
-  _batchSize = 10;       // maxitems
-  _targetCount = 0;      // render up to this many items total
-  _renderedCount = 0;
+  // Batch sizing configuration
+  _batchSize = 10; // Number of items to load per batch (from maxitems attribute)
+  _targetCount = 0; // Total number of items to render
+  _renderedCount = 0; // Number of items currently rendered
 
-  // Infinite + gating
-  _isInfinite = false;
-  _observer = null;
-  _isLoading = false;
+  // Infinite scroll state
+  _isInfinite = false; // Whether infinite scrolling is enabled
+  _observer = null; // IntersectionObserver instance for infinite scroll
+  _isLoading = false; // Lock to prevent concurrent fetch operations
 
-  // Prevent auto-draining when sentinel is visible
-  _scrollArmed = false;
-  _lastScrollY = 0;
-  _onScroll = null;
+  // Scroll detection - prevents auto-loading when sentinel is initially visible
+  _scrollArmed = false; // True when user has scrolled down, allowing next load
+  _lastScrollY = 0; // Last recorded scroll position
+  _onScroll = null; // Scroll event handler reference
 
-  // Dialog
-  dialogInitiated = false;
-  dialog = null;
-  dialogContent = null;
+  // Dialog/modal state
+  dialogInitiated = false; // Whether dialog has been initialized
+  dialog = null; // Reference to dialog element
+  dialogContent = null; // Reference to dialog content container
 
+  // ---------------------------------------------------------------------------
+  // HTML Template Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Generates the copy handle button HTML with clipboard functionality
+   * @param {Object} params - Object containing preferredUsername and serverHost
+   * @returns {string} HTML string for the copy button
+   */
   _copyHandleButton = ({ preferredUsername, serverHost }) => `
     <button class="copy-handle" data-handle="@${preferredUsername}@${serverHost}" title="Copy handle">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
@@ -337,17 +436,43 @@ class GhostActivityPubEmbed extends HTMLElement {
         <path d="M20 6 9 17l-5-5"></path>
       </svg>
     </button>`;
-  
+
+  // ---------------------------------------------------------------------------
+  // Utility Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extracts the UUID from an ActivityPub object's ID URL
+   * @param {Object} obj - ActivityPub object with an id property
+   * @returns {string|null} The UUID (last path segment) or null
+   */
   getUuidFromObject(obj) {
     if (!obj?.id) return null;
-    return obj.id.split('/').pop();
-  }
-  
-  formatDate(dateStr) {
-    const date = new Date(dateStr);
-    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
+    return obj.id.split("/").pop();
   }
 
+  /**
+   * Formats a date string into a human-readable format (e.g., "Jan 15")
+   * @param {string} dateStr - ISO date string
+   * @returns {string} Formatted date string
+   */
+  formatDate(dateStr) {
+    const date = new Date(dateStr);
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+    }).format(date);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Renders the profile header section with banner, avatar, and user info
+   * @param {Object} profileData - ActivityPub actor profile data
+   * @returns {string} HTML string for the profile header
+   */
   renderProfileHeader(profileData) {
     return `
       <div class="profile-header" part="header">
@@ -378,7 +503,14 @@ class GhostActivityPubEmbed extends HTMLElement {
       </div>`;
   }
 
+  /**
+   * Renders a single feed item (Note or Article)
+   * @param {Object} item - ActivityPub activity object (Create type)
+   * @param {Object} profileData - Profile data for the author
+   * @returns {string} HTML string for the feed item, or empty string if not renderable
+   */
   renderItem(item, profileData) {
+    // Only render Create activities with Note or Article objects
     if (
       item?.type === "Create" &&
       item.object &&
@@ -389,13 +521,16 @@ class GhostActivityPubEmbed extends HTMLElement {
       const published = obj.published;
       const uuid = this.getUuidFromObject(obj);
       const date = this.formatDate(published);
+
+      // Create a link to the post if we have a UUID, otherwise just display the date
       const dateHtml = uuid
         ? `<a href="/n/${uuid}" class="feed-item-date" target="_top" rel="noopener">${date}</a>`
         : `<span class="feed-item-date">${date}</span>`;
 
-
-      // attachment can be object or array
-      const att = Array.isArray(obj.attachment) ? obj.attachment[0] : obj.attachment;
+      // Handle image attachments - can be object or array
+      const att = Array.isArray(obj.attachment)
+        ? obj.attachment[0]
+        : obj.attachment;
       const attachment =
         att && att.type === "Image" && att.url
           ? `<img class="feed-item-image" src="${att.url}" alt="Attached image">`
@@ -419,7 +554,7 @@ class GhostActivityPubEmbed extends HTMLElement {
           <div class="feed-item-content" part="feed-item-content">
             ${
               obj.type === "Note"
-                ? (obj.content || "")
+                ? obj.content || ""
                 : `
               <a href="${obj.url}" target="_top" class="feed-item-article-preview">
                 <h3>${obj.name || ""}</h3>
@@ -434,19 +569,37 @@ class GhostActivityPubEmbed extends HTMLElement {
     return ``;
   }
 
+  // ---------------------------------------------------------------------------
+  // URL Handling Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Gets the target Ghost site URL from the url attribute or current location
+   * @returns {URL} The site URL
+   */
   _getSiteUrl() {
     return new URL(this.getAttribute("url") || document.location.href);
   }
 
+  /**
+   * Gets the proxy URL for cross-origin requests
+   * @returns {URL} The proxy URL (falls back to site URL if not specified)
+   */
   _getProxyUrl() {
     return new URL(this.getAttribute("proxy") || this._getSiteUrl());
   }
 
+  /**
+   * Normalizes an ActivityPub endpoint path to a consistent format
+   * Handles various input formats:
+   *   - "users/index"
+   *   - "/.ghost/activitypub/users/index"
+   *   - "https://site/.ghost/activitypub/users/index?x=y"
+   *
+   * @param {string} endpoint - The endpoint path or URL
+   * @returns {string} Normalized path without leading slashes
+   */
   _normalizeApPath(endpoint) {
-    // Handles:
-    // - "users/index"
-    // - "/.ghost/activitypub/users/index"
-    // - "https://site/.ghost/activitypub/users/index?x=y"
     const siteUrl = this._getSiteUrl();
     let u;
     try {
@@ -455,6 +608,7 @@ class GhostActivityPubEmbed extends HTMLElement {
       return String(endpoint || "").replace(/^\/+/, "");
     }
 
+    // Extract path after the ActivityPub prefix if present
     const prefix = "/.ghost/activitypub/";
     const href = u.href;
     const i = href.indexOf(prefix);
@@ -463,6 +617,17 @@ class GhostActivityPubEmbed extends HTMLElement {
     return String(endpoint || "").replace(/^\/+/, "");
   }
 
+  // ---------------------------------------------------------------------------
+  // Data Fetching Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetches data from a Ghost ActivityPub endpoint
+   * Supports proxy mode for cross-origin requests
+   *
+   * @param {string} endpoint - The endpoint path (e.g., "users/index", "outbox/index")
+   * @returns {Promise<[Error|null, Object|null]>} Tuple of [error, data]
+   */
   async fetchEndpoint(endpoint) {
     const url = this._getSiteUrl();
     const proxy = this._getProxyUrl();
@@ -475,22 +640,35 @@ class GhostActivityPubEmbed extends HTMLElement {
       const response = await fetch(`${baseOrigin}/.ghost/activitypub/${path}`, {
         headers: {
           accept: "application/activity+json",
+          // Include x-proxy header when using proxy to indicate the target origin
           ...(proxyMode ? { "x-proxy": url.origin } : {}),
         },
       });
 
-      if (!response.ok) return [new Error(`HTTP error! status: ${response.status}`), null];
+      if (!response.ok)
+        return [new Error(`HTTP error! status: ${response.status}`), null];
       return [null, await response.json()];
     } catch (error) {
       return [error, null];
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Infinite Scroll / IntersectionObserver Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Disconnects and cleans up the IntersectionObserver
+   */
   _teardownObserver() {
     if (this._observer) this._observer.disconnect();
     this._observer = null;
   }
 
+  /**
+   * Sets up the IntersectionObserver for infinite scrolling
+   * Observes a sentinel element at the bottom of the feed to trigger loading more items
+   */
   _setupObserver() {
     if (!this._isInfinite) return;
     if (this._observer) return;
@@ -504,28 +682,43 @@ class GhostActivityPubEmbed extends HTMLElement {
         if (!entry?.isIntersecting) return;
         if (this._isLoading) return;
 
-        // Prevent auto-draining:
-        // after initial batch, require a real downward scroll to arm the next load
+        // Prevent auto-loading on initial render:
+        // After the first batch, require a real downward scroll to arm the next load
+        // This prevents loading all content when the sentinel is initially visible
         if (this._renderedCount > 0 && !this._scrollArmed) return;
 
+        // Reset the arm after triggering a load
         if (this._renderedCount > 0) this._scrollArmed = false;
 
+        // Increase target count and drain more items
         this._targetCount += this._batchSize;
         this._drain();
       },
-      { root: null, rootMargin: "200px 0px", threshold: 0 }
+      { root: null, rootMargin: "200px 0px", threshold: 0 },
     );
 
     this._observer.observe(sentinel);
   }
 
+  // ---------------------------------------------------------------------------
+  // Pagination / Buffer Management Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Renders items from the page buffer to the DOM
+   * Continues until we've rendered enough items or exhausted the buffer
+   */
   _appendItemsFromBuffer() {
     const container = this.shadowRoot.querySelector(".feed-items");
     if (!container) return;
 
-    while (this._pageIndex < this._pageItems.length && this._renderedCount < this._targetCount) {
+    while (
+      this._pageIndex < this._pageItems.length &&
+      this._renderedCount < this._targetCount
+    ) {
       const item = this._pageItems[this._pageIndex++];
 
+      // Deduplicate by item ID
       const id = item?.id || item?.object?.id || null;
       if (id && this._seenIds.has(id)) continue;
       if (id) this._seenIds.add(id);
@@ -538,10 +731,16 @@ class GhostActivityPubEmbed extends HTMLElement {
     }
   }
 
+  /**
+   * Fetches the next page of items if the current buffer is exhausted
+   * Includes loop protection by tracking fetched page URLs
+   */
   async _fetchNextPageIfNeeded() {
+    // Don't fetch if we still have items in the buffer
     if (this._pageIndex < this._pageItems.length) return;
     if (!this._nextPageUrl) return;
 
+    // Loop protection - don't fetch the same page twice
     const key = String(this._nextPageUrl);
     if (this._seenPageUrls.has(key)) {
       this._nextPageUrl = null;
@@ -553,25 +752,38 @@ class GhostActivityPubEmbed extends HTMLElement {
     if (err) {
       const container = this.shadowRoot.querySelector(".feed-container");
       if (container) {
-        container.insertAdjacentHTML("beforeend", `<div class="error">Error loading more: ${err.message}</div>`);
+        container.insertAdjacentHTML(
+          "beforeend",
+          `<div class="error">Error loading more: ${err.message}</div>`,
+        );
       }
       this._nextPageUrl = null;
       return;
     }
 
-    this._pageItems = Array.isArray(itemsData?.orderedItems) ? itemsData.orderedItems : [];
+    // Update buffer with new page data
+    this._pageItems = Array.isArray(itemsData?.orderedItems)
+      ? itemsData.orderedItems
+      : [];
     this._pageIndex = 0;
     this._nextPageUrl = itemsData?.next || null;
   }
 
+  /**
+   * Main rendering loop - drains items from buffer and fetches more pages as needed
+   * Continues until we've rendered enough items or exhausted all pages
+   */
   async _drain() {
+    // Prevent concurrent drain operations
     if (this._isLoading) return;
     if (!this._profileData) return;
 
     this._isLoading = true;
 
+    // First, render any items already in the buffer
     this._appendItemsFromBuffer();
 
+    // Keep fetching and rendering until we hit target count or run out of data
     while (
       this._renderedCount < this._targetCount &&
       this._pageIndex >= this._pageItems.length &&
@@ -582,10 +794,11 @@ class GhostActivityPubEmbed extends HTMLElement {
       if (this._pageItems.length === 0) break;
     }
 
+    // Remove loading indicator once we have content
     const loading = this.shadowRoot.querySelector(".loading");
     if (loading) loading.remove();
 
-    // Exhausted
+    // Clean up if we've exhausted all data
     if (!this._nextPageUrl && this._pageIndex >= this._pageItems.length) {
       this._teardownObserver();
       const s = this.shadowRoot.querySelector(".ghap-sentinel");
@@ -595,10 +808,13 @@ class GhostActivityPubEmbed extends HTMLElement {
     this._isLoading = false;
   }
 
+  /**
+   * Main entry point - fetches profile and feed data, sets up the component
+   */
   async fetchFeed() {
     this._teardownObserver();
 
-    // reset
+    // Reset all state for a fresh fetch
     this._profileData = null;
     this._pageItems = [];
     this._pageIndex = 0;
@@ -609,8 +825,10 @@ class GhostActivityPubEmbed extends HTMLElement {
 
     this._isLoading = false;
 
+    // Parse configuration from attributes
     this._batchSize = parseInt(this.getAttribute("maxitems") || "10", 10);
-    if (!Number.isFinite(this._batchSize) || this._batchSize < 1) this._batchSize = 10;
+    if (!Number.isFinite(this._batchSize) || this._batchSize < 1)
+      this._batchSize = 10;
 
     this._isInfinite = this.hasAttribute("infinite");
 
@@ -623,7 +841,9 @@ class GhostActivityPubEmbed extends HTMLElement {
     const url = this._getSiteUrl();
 
     try {
-      const [profileError, profileData] = await this.fetchEndpoint("users/index");
+      // Fetch profile data from the users endpoint
+      const [profileError, profileData] =
+        await this.fetchEndpoint("users/index");
       if (profileError) throw profileError;
 
       this._profileData = profileData;
@@ -631,6 +851,7 @@ class GhostActivityPubEmbed extends HTMLElement {
 
       const profileHeaderHTML = this.renderProfileHeader(this._profileData);
 
+      // Dialog for image lightbox and follow modal
       const attachmentModal = `
         <dialog>
           <button class="close-dialog">
@@ -645,6 +866,7 @@ class GhostActivityPubEmbed extends HTMLElement {
           <div class="dialog-content"></div>
         </dialog>`;
 
+      // Render the main structure
       container.innerHTML = `
         ${attachmentModal}
         ${profileHeaderHTML}
@@ -652,24 +874,31 @@ class GhostActivityPubEmbed extends HTMLElement {
         ${this._isInfinite ? `<div class="ghap-sentinel"></div>` : ``}
       `;
 
+      // Fetch the outbox to get feed items
       const [error, outboxData] = await this.fetchEndpoint("outbox/index");
       if (error) throw error;
 
       if (outboxData?.totalItems > 0) {
-        if (!outboxData.first) throw new Error('Invalid feed format: missing "first" property');
+        if (!outboxData.first)
+          throw new Error('Invalid feed format: missing "first" property');
 
-        const [firstError, itemsData] = await this.fetchEndpoint(outboxData.first);
+        // Fetch the first page of items
+        const [firstError, itemsData] = await this.fetchEndpoint(
+          outboxData.first,
+        );
         if (firstError) throw firstError;
 
         if (!Array.isArray(itemsData?.orderedItems)) {
           throw new Error('Invalid feed format: missing "orderedItems" array');
         }
 
+        // Initialize the pagination buffer
         this._pageItems = itemsData.orderedItems;
         this._pageIndex = 0;
         this._nextPageUrl = itemsData.next || null;
       }
 
+      // Start observing for infinite scroll and render initial items
       this._setupObserver();
       await this._drain();
     } catch (error) {
@@ -678,6 +907,14 @@ class GhostActivityPubEmbed extends HTMLElement {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Dialog / Modal Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initializes the dialog element and its close button
+   * Only runs once per component instance
+   */
   initDialog() {
     if (this.dialogInitiated) return;
 
@@ -689,32 +926,50 @@ class GhostActivityPubEmbed extends HTMLElement {
     this.dialogInitiated = true;
   }
 
+  /**
+   * Shows the dialog with the given node's HTML content
+   * @param {HTMLElement} node - Element whose outerHTML will be displayed in the dialog
+   */
   showDialog(node) {
     this.initDialog();
     this.dialogContent.innerHTML = node.outerHTML;
     this.dialog.showModal();
   }
 
+  // ---------------------------------------------------------------------------
+  // Web Component Lifecycle Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Called when the element is added to the DOM
+   * Sets up scroll detection and event listeners
+   */
   connectedCallback() {
-    // arm infinite loads only after user scrolls downward
+    // Set up scroll detection to arm infinite scroll loads
+    // This prevents auto-loading when the sentinel is visible on initial render
     this._lastScrollY = window.scrollY || 0;
     this._scrollArmed = false;
 
     this._onScroll = () => {
       const y = window.scrollY || 0;
+      // Arm the loader when user scrolls down by at least 8px
       if (y > this._lastScrollY + 8) this._scrollArmed = true;
       this._lastScrollY = y;
     };
     window.addEventListener("scroll", this._onScroll, { passive: true });
 
+    // Start fetching the feed
     this.fetchFeed();
 
+    // Set up delegated event listeners for interactive elements
     this.shadowRoot.addEventListener("click", (event) => {
+      // Image lightbox - show full-size image in dialog
       if (event.target.matches(".feed-item .feed-item-image")) {
         this.showDialog(event.target);
         return;
       }
 
+      // Copy handle button - copy ActivityPub handle to clipboard
       if (event.target.closest(".copy-handle")) {
         const btn = event.target.closest(".copy-handle");
         navigator.clipboard.writeText(btn.getAttribute("data-handle"));
@@ -723,6 +978,7 @@ class GhostActivityPubEmbed extends HTMLElement {
         return;
       }
 
+      // Follow button - show follow instructions modal
       if (event.target.matches(".ghap-follow-button")) {
         const followModalContent = document.createElement("div");
         followModalContent.innerHTML = `
@@ -742,17 +998,32 @@ class GhostActivityPubEmbed extends HTMLElement {
     });
   }
 
+  /**
+   * Called when the element is removed from the DOM
+   * Cleans up observers and event listeners
+   */
   disconnectedCallback() {
     this._teardownObserver();
     if (this._onScroll) window.removeEventListener("scroll", this._onScroll);
   }
 
+  /**
+   * Called when an observed attribute changes
+   * Triggers a feed refresh when configuration attributes are modified
+   */
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
-    if (["url", "proxy", "include-posts", "maxitems", "infinite"].includes(name)) {
+    if (
+      ["url", "proxy", "include-posts", "maxitems", "infinite"].includes(name)
+    ) {
       this.fetchFeed();
     }
   }
 }
 
+// =============================================================================
+// CUSTOM ELEMENT REGISTRATION
+// =============================================================================
+
+// Register the custom element with the browser
 customElements.define("ghost-activitypub-embed", GhostActivityPubEmbed);
